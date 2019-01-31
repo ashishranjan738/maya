@@ -95,6 +95,7 @@ spec:
   taskNamespace: {{env "OPENEBS_NAMESPACE"}}
   run:
     tasks:
+    - cstor-volume-delete-listcstorvolumecr-validate-default
     - cstor-volume-delete-listcstorvolumecr-default
     - cstor-volume-delete-listtargetservice-default
     - cstor-volume-delete-listtargetdeployment-default
@@ -302,6 +303,9 @@ spec:
         openebs.io/persistent-volume: {{ .Volume.owner }}
         openebs.io/version: {{ .CAST.version }}
         openebs.io/cas-template-name: {{ .CAST.castName }}
+        {{ if eq .Volume.isCloneEnable "true" }}
+        openebs.io/source-volume: {{ .Volume.sourceVolume }}
+        {{ end }}
     spec:
       targetIP: {{ .TaskResult.cvolcreateputsvc.clusterIP }}
       capacity: {{ .Volume.capacity }}
@@ -876,6 +880,31 @@ spec:
       fsType: {{ .TaskResult.readlistcv.fsType }}
       replicas: {{ .TaskResult.readlistrep.capacity | default "" | splitList " " | len }}
       casType: cstor
+---
+# runTask to check for clone volume
+apiVersion: openebs.io/v1alpha1
+kind: RunTask
+metadata:
+  name: cstor-volume-delete-listcstorvolumecr-validate-default
+spec:
+  meta: |
+    {{- $isClone := .Volume.isCloneEnable | default "false" -}}
+    {{- $runNamespace := .Config.RunNamespace.value -}}
+    {{- $pvcServiceAccount := .Config.PVCServiceAccountName.value | default "" -}}
+    {{- if ne $pvcServiceAccount "" }}
+    runNamespace: {{ .Volume.runNamespace | saveAs "validatelistcsv.derivedNS" .TaskResult }}
+    {{ else }}
+    runNamespace: {{ $runNamespace | saveAs "validatelistcsv.derivedNS" .TaskResult }}
+    {{- end }}
+    id: validatelistcsv
+    apiVersion: openebs.io/v1alpha1
+    kind: CStorVolume
+    action: list
+    options: |-
+      labelSelector: openebs.io/source-volume={{ .Volume.owner }}
+  post: |
+    {{- jsonpath .JsonResult "{.items[*].metadata.name}" | trim | saveAs "validatelistcsv.names" .TaskResult | noop -}}
+    {{- .TaskResult.validatelistcsv.names | notFoundErr "cstor volume cannot be delete because of clone" | saveIf "validatelistcsv.notFoundErr" .TaskResult | noop -}}
 ---
 # runTask to list the cstorvolume that has to be deleted
 apiVersion: openebs.io/v1alpha1
